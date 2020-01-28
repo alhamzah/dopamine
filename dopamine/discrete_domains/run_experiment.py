@@ -24,6 +24,7 @@ import time
 
 from dopamine.agents.dqn import dqn_agent
 from dopamine.agents.ddqn import ddqn_agent
+from dopamine.agents.multi_head import multi_head_ddqn_agent
 from dopamine.agents.implicit_quantile import implicit_quantile_agent
 from dopamine.agents.rainbow import rainbow_agent
 from dopamine.discrete_domains import atari_lib
@@ -88,6 +89,10 @@ def create_agent(sess, environment, agent_name=None, summary_writer=None,
         summary_writer=summary_writer)
   elif agent_name == 'ddqn':
     return ddqn_agent.DDQNAgent(
+        sess, num_actions=environment.action_space.n,
+        summary_writer=summary_writer)
+  elif agent_name == 'multi_head_ddqn':
+    return multi_head_ddqn_agent.MultiHeadDDQNAgent(
         sess, num_actions=environment.action_space.n,
         summary_writer=summary_writer)
   else:
