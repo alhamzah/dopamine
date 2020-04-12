@@ -102,7 +102,9 @@ class DQNAgent(object):
                    centered=True),
                summary_writer=None,
                summary_writing_frequency=500,
-               allow_partial_reload=False):
+               allow_partial_reload=False,
+               log_dir=None,
+               log_frequency=1000):
     """Initializes the agent and constructs the components of its graph.
 
     Args:
@@ -146,6 +148,8 @@ class DQNAgent(object):
         (for instance, only the network parameters).
     """
     assert isinstance(observation_shape, tuple)
+    assert log_dir != None
+
     tf.logging.info('Creating %s agent with the following parameters:',
                     self.__class__.__name__)
     tf.logging.info('\t gamma: %f', gamma)
@@ -183,6 +187,9 @@ class DQNAgent(object):
     self.summary_writer = summary_writer
     self.summary_writing_frequency = summary_writing_frequency
     self.allow_partial_reload = allow_partial_reload
+    self.log_dir = log_dir
+    self.log_counter = 0
+    self.log_frequency = log_frequency
 
     with tf.device(tf_device):
       # Create a placeholder for the state input to the DQN network.
@@ -391,6 +398,13 @@ class DQNAgent(object):
        int, the selected action.
     """
     if self.eval_mode:
+      if self.log_counter%self.log_frequency == 0:
+        #save the q values
+        with open(self.log_dir+'/test_log.txt', 'ab') as f:
+          x = self._sess.run(self._net_outputs.q_values, {self.state_ph: self.state})
+          np.savetxt(f, x)
+      self.log_counter += 1
+
       epsilon = self.epsilon_eval
     else:
       epsilon = self.epsilon_fn(
