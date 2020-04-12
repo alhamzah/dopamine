@@ -9,6 +9,8 @@ import gin
 import tensorflow as tf
 import numpy as np
 
+import random
+
 
 @gin.configurable
 class MultiHeadDDQNAgent(dqn_agent.DQNAgent):
@@ -22,6 +24,8 @@ class MultiHeadDDQNAgent(dqn_agent.DQNAgent):
                num_convex_combinations=1,
                network=atari_helpers.multi_head_network,
                init_checkpoint_dir=None,
+               log_dir=None,
+               log_frequency=1000,
                **kwargs):
     """Initializes the agent and constructs the components of its graph.
 
@@ -51,7 +55,12 @@ class MultiHeadDDQNAgent(dqn_agent.DQNAgent):
     tf.logging.info('\t num_convex_combinations: %d', num_convex_combinations)
     tf.logging.info('\t init_checkpoint_dir: %s', init_checkpoint_dir)
 
+    assert log_dir != None
+
     self.num_heads = num_heads
+    self.log_dir = log_dir
+    self.log_counter = 0
+    self.log_frequency = log_frequency
     
     if init_checkpoint_dir is not None:
       self._init_checkpoint_dir = os.path.join(
@@ -136,3 +145,34 @@ class MultiHeadDDQNAgent(dqn_agent.DQNAgent):
       with tf.variable_scope('Losses'):
         tf.summary.scalar('HuberLoss', final_loss)
     return self.optimizer.minimize(final_loss)
+
+  def _select_action(self):
+    """Select an action from the set of available actions.
+
+    Chooses an action randomly with probability self._calculate_epsilon(), and
+    otherwise acts greedily according to the current Q-value estimates.
+
+    Returns:
+       int, the selected action.
+    """
+    if self.eval_mode:
+      if self.log_counter%self.log_frequency == 0:
+        #save the q values
+        with open(self.log_dir+'/test_log.txt', 'ab') as f:
+          x = self._sess.run(self._net_outputs.q_values, {self.state_ph: self.state})
+          np.savetxt(f, x)
+      self.log_counter += 1
+
+      epsilon = self.epsilon_eval
+    else:
+      epsilon = self.epsilon_fn(
+          self.epsilon_decay_period,
+          self.training_steps,
+          self.min_replay_history,
+          self.epsilon_train)
+    if random.random() <= epsilon:
+      # Choose a random action with probability epsilon.
+      return random.randint(0, self.num_actions - 1)
+    else:
+      # Choose the action with highest Q-value at the current state.
+      return self._sess.run(self._q_argmax, {self.state_ph: self.state})
