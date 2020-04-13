@@ -159,8 +159,11 @@ class MultiHeadDDQNAgent(dqn_agent.DQNAgent):
       if self.log_counter%self.log_frequency == 0:
         #save the q values
         with open(self.log_dir+'/test_log.txt', 'ab') as f:
-          x = self._sess.run(self._net_outputs.q_values, {self.state_ph: self.state})
-          np.savetxt(f, x)
+          x = self._sess.run(self._net_outputs.q_heads,
+                             {self.state_ph: self.state})
+          for i in range(len(x)):
+            np.savetxt(f, x[i])
+          np.savetxt(f, [0])
       self.log_counter += 1
 
       epsilon = self.epsilon_eval
