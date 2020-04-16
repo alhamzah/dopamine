@@ -112,3 +112,46 @@ class MultiHeadUCBAgent(multi_head_ddqn_agent.MultiHeadDDQNAgent):
           np.savetxt(f, np.array([x]))
 
       self.log_counter += 1
+
+  def bundle_and_checkpoint(self, checkpoint_dir, iteration_number):
+    if not tf.gfile.Exists(checkpoint_dir):
+      return None
+    # Call the Tensorflow saver to checkpoint the graph.
+    self._saver.save(
+        self._sess,
+        os.path.join(checkpoint_dir, 'tf_ckpt'),
+        global_step=iteration_number)
+    # Checkpoint the out-of-graph replay buffer.
+    self._replay.save(checkpoint_dir, iteration_number)
+    bundle_dictionary = {}
+    bundle_dictionary['state'] = self.state
+    bundle_dictionary['training_steps'] = self.training_steps
+    bundle_dictionary['ucb_count'] = self.ucb_count
+    bundle_dictionary['arms'] = self.arms
+    bundle_dictionary['rewards'] = self.rewards
+    return bundle_dictionary
+
+  def unbundle(self, checkpoint_dir, iteration_number, bundle_dictionary):
+    try:
+      # self._replay.load() will throw a NotFoundError if it does not find all
+      # the necessary files.
+      self._replay.load(checkpoint_dir, iteration_number)
+    except tf.errors.NotFoundError:
+      if not self.allow_partial_reload:
+        # If we don't allow partial reloads, we will return False.
+        return False
+      tf.logging.warning('Unable to reload replay buffer!')
+    if bundle_dictionary is not None:
+      for key in self.__dict__:
+        if key in bundle_dictionary:
+          self.__dict__[key] = bundle_dictionary[key]
+          tf.logging.info('\t loaded ' + key)
+    elif not self.allow_partial_reload:
+      return False
+    else:
+      tf.logging.warning("Unable to reload the agent's parameters!")
+    # Restore the agent's TensorFlow graph.
+    self._saver.restore(self._sess,
+                        os.path.join(checkpoint_dir,
+                                     'tf_ckpt-{}'.format(iteration_number)))
+    return True
