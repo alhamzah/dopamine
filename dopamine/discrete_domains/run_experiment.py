@@ -27,6 +27,7 @@ from dopamine.agents.ddqn import ddqn_agent
 from dopamine.agents.multi_head import multi_head_ddqn_agent
 from dopamine.agents.multi_head_ucb import multi_head_ucb_agent
 from dopamine.agents.multi_head_thompson import multi_head_thompson_agent
+from dopamine.agents.multi_head_contextual_ucb import multi_head_contextual_ucb_agent
 from dopamine.agents.implicit_quantile import implicit_quantile_agent
 from dopamine.agents.rainbow import rainbow_agent
 from dopamine.discrete_domains import atari_lib
@@ -103,6 +104,10 @@ def create_agent(sess, environment, agent_name=None, summary_writer=None,
         summary_writer=summary_writer)
   elif agent_name == 'multi_head_thompson':
     return multi_head_thompson_agent.MultiHeadThompsonAgent(
+        sess, num_actions=environment.action_space.n,
+        summary_writer=summary_writer)
+  elif agent_name == 'multi_head_contextual_ucb':
+    return multi_head_contextual_ucb_agent.MultiHeadContextualUCBAgent(
         sess, num_actions=environment.action_space.n,
         summary_writer=summary_writer)
   else:
