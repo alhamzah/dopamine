@@ -21,7 +21,7 @@ class MultiHeadContextualUCBAgent(multi_head_ddqn_agent.MultiHeadDDQNAgent):
                num_actions,
                network=atari_helpers.multi_head_contextual_ucb_network,
                ucb_cutoff=0.5,
-               ucb_alpha=0.9,
+               ucb_alpha=3.5,
                **kwargs):
     """Initializes the agent and constructs the components of its graph.
     """
@@ -30,48 +30,59 @@ class MultiHeadContextualUCBAgent(multi_head_ddqn_agent.MultiHeadDDQNAgent):
     tf.logging.info('\t ucb_alpha: %f', ucb_alpha)
 
     self.ucb_cutoff = ucb_cutoff
-    self.ucb_alpha = ucb_alpha
-    self.cur_head = 0
+    self.ucb_d = 512
+    self.ucb_alpha = np.sqrt(1/2*np.log(2*(2*10**6 *
+                                          8/0.01)))
 
     super(MultiHeadContextualUCBAgent, self).__init__(
         sess, num_actions, network=network, **kwargs)
 
+    self.cur_head = 0
     self.ucb_count = 0
-    self.ucb_d = 512
     self.ucb_A = np.identity(self.ucb_d)
-    self.ucb_b = np.zeros(self.ucb_d).reshape((self.ucb_d, 1))
-    self.ucb_X = np.zeros(self.ucb_d).reshape((self.ucb_d, 1))
+    self.ucb_b = np.zeros((self.ucb_d, self.num_heads))
+
+  def _build_networks(self):
+    self.online_convnet = self._create_network(name='Online')
+    self.target_convnet = self._create_network(name='Target')
+    self._net_outputs = self.online_convnet(self.state_ph)
+
+    self._q_argmax = tf.argmax(self._net_outputs.q_values, axis=1)[0]
+    self._replay_net_outputs = self.online_convnet(self._replay.states)
+    self._replay_next_target_net_outputs = self.target_convnet(
+        self._replay.next_states)
+
+    self.ucb_A_ph = tf.placeholder(tf.float32)
+    self.ucb_b_ph = tf.placeholder(tf.float32)
+    self.ucb_net = atari_helpers.contextual_ucb_network(self.ucb_A_ph,
+                                                        self.ucb_b_ph,
+                                                        self.ucb_d,
+                                                        self.ucb_alpha,
+                                                        self._net_outputs.ucb_context)
 
   def _get_network_type(self):
     return collections.namedtuple('multi_head_contextual_ucb_network',
                                   ['q_heads', 'unordered_q_heads', 'q_values',
                                    'ucb_context'])
 
-  def _compute_ucb(self):
-    A_inv = np.linalg.inv(self.ucb_A)
-    theta = np.dot(A_inv, self.ucb_b).reshape((self.ucb_d, 1))
-    self.ucb_X = self._sess.run(self._net_outputs.ucb_context,
-                                {self.state_ph: self.state})
-    self.ucb_X = self.ucb_X.reshape((self.ucb_d, 1))
-    X = self.ucb_X
-
-    bounds = []
-    for arm in range(self.num_heads):
-        p_a = np.dot(theta.T, X) + self.ucb_alpha*np.sqrt(X.T.dot(A_inv).dot(X))
-        bounds.append(p_a[0,0])
-    return bounds
-
   def _compute_q_argmax(self):
-    self.cur_head = np.argmax(self._compute_ucb())
+    """Update the best head and find the best action in this context"""
+    self.cur_head = self._sess.run(self.ucb_net._P_argmax,
+                                   {self.state_ph: self.state,
+                                    self.ucb_A_ph: self.ucb_A,
+                                    self.ucb_b_ph: self.ucb_b})[0]
     x = self._sess.run(self._net_outputs.q_heads,
                        {self.state_ph: self.state})
     return np.argmax(x[:,:,self.cur_head], axis=1)[0]
-    
+
   def _update_ucb(self, selected_head, reward):
+    import pdb; pdb.set_trace()
     r = int(reward > self.ucb_cutoff)
-    self.ucb_A += self.ucb_X.dot(self.ucb_X.T)
-    self.ucb_b += self.ucb_X*r
-    
+    ucb_X = self._sess.run(self.ucb_net.X,
+                           {self.state_ph: self.state})
+    self.ucb_A += ucb_X.dot(ucb_X.T)
+    self.ucb_b[:, selected_head] += np.squeeze(ucb_X*r)
+
   def _store_transition(self, last_observation, action, reward, is_terminal):
     self._update_ucb(self.cur_head, reward)
     self._replay.add(last_observation, action, reward, is_terminal)
@@ -112,8 +123,11 @@ class MultiHeadContextualUCBAgent(multi_head_ddqn_agent.MultiHeadDDQNAgent):
             np.savetxt(f, x[i])
           np.savetxt(f, [0])
         with open(self.log_dir+'/ucb_values.txt', 'ab') as f:
-          x = self._compute_ucb()
-          np.savetxt(f, np.array([x]))
+          x = self._sess.run(self.ucb_net.P,
+                             {self.state_ph: self.state,
+                              self.ucb_A_ph: self.ucb_A,
+                              self.ucb_b_ph: self.ucb_b})
+          np.savetxt(f, x.T)
 
       self.log_counter += 1
 
@@ -133,30 +147,4 @@ class MultiHeadContextualUCBAgent(multi_head_ddqn_agent.MultiHeadDDQNAgent):
     bundle_dictionary['ucb_count'] = self.ucb_count
     bundle_dictionary['ucb_A'] = self.ucb_A
     bundle_dictionary['ucb_b'] = self.ucb_b
-    bundle_dictionary['ucb_X'] = self.ucb_X
     return bundle_dictionary
-
-  def unbundle(self, checkpoint_dir, iteration_number, bundle_dictionary):
-    try:
-      # self._replay.load() will throw a NotFoundError if it does not find all
-      # the necessary files.
-      self._replay.load(checkpoint_dir, iteration_number)
-    except tf.errors.NotFoundError:
-      if not self.allow_partial_reload:
-        # If we don't allow partial reloads, we will return False.
-        return False
-      tf.logging.warning('Unable to reload replay buffer!')
-    if bundle_dictionary is not None:
-      for key in self.__dict__:
-        if key in bundle_dictionary:
-          self.__dict__[key] = bundle_dictionary[key]
-          tf.logging.info('\t loaded ' + key)
-    elif not self.allow_partial_reload:
-      return False
-    else:
-      tf.logging.warning("Unable to reload the agent's parameters!")
-    # Restore the agent's TensorFlow graph.
-    self._saver.restore(self._sess,
-                        os.path.join(checkpoint_dir,
-                                     'tf_ckpt-{}'.format(iteration_number)))
-    return True

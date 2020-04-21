@@ -47,3 +47,14 @@ class multi_head_contextual_ucb_network(tf.keras.Model):
     q_values = tf.reduce_mean(q_heads, axis=-1)
 
     return self.network_type(q_heads, unordered_q_heads, q_values, ucb_context)
+
+class contextual_ucb_network:
+
+    def __init__(self, ucb_A, ucb_b, ucb_d, ucb_alpha, ucb_X):
+        self.X = tf.reshape(ucb_X, (512, 1))
+        self.A_inv = tf.linalg.inv(ucb_A)
+        self.s = ucb_alpha*tf.sqrt(tf.transpose(self.X)@self.A_inv@self.X)
+        self.theta = self.A_inv@ucb_b
+#         self.P = tf.transpose(self.theta)@self.X + s
+        self.P = tf.transpose(self.theta)@self.X
+        self._P_argmax = tf.argmax(self.P)
